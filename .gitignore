@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Environment files — contain secrets (DB password, JWT secret), never commit
+.env
+client/.env
+server/.env
+.env.local
+.env.*.local
+
+# Uploaded product images (local files, not meant to live in git history)
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Build output
+client/dist/
+client/build/
+
+# OS / editor junk
+.DS_Store
+*.log
