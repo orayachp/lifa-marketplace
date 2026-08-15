@@ -334,6 +334,7 @@ export default function App() {
           products={listProducts} loading={listLoading}
           categories={categories} activeCategory={activeCategory}
           onSelectCategory={openList} onOpenProduct={openProduct}
+          authToken={authToken} isLoggedIn={!!authUser} onGoLogin={() => setView("login")}
         />
       )}
       {view === "cart" && (
@@ -409,6 +410,14 @@ function ProductView({
 
   const [inWishlist, setInWishlist] = useState(false);
   const [wishlistBusy, setWishlistBusy] = useState(false);
+
+  useEffect(() => {
+    if (!isLoggedIn) { setInWishlist(false); return; }
+    fetch(`${API}/api/wishlist`, { headers: { Authorization: `Bearer ${authToken}` } })
+      .then((r) => r.json())
+      .then((rows) => setInWishlist(rows.some((r) => r.id === product.id)))
+      .catch((e) => console.error(e));
+  }, [product.id, isLoggedIn, authToken]);
 
   async function toggleWishlist() {
     if (!isLoggedIn) return onGoLogin();
@@ -846,8 +855,39 @@ function RegisterView({ onSuccess, onGoLogin }) {
 // Product listing — grid of products, filterable by category chips.
 // ---------------------------------------------------------------------------
 
-function ProductListView({ products, loading, categories, activeCategory, onSelectCategory, onOpenProduct }) {
+function ProductListView({ products, loading, categories, activeCategory, onSelectCategory, onOpenProduct, authToken, isLoggedIn, onGoLogin }) {
   const activeCategoryName = categories.find((c) => c.slug === activeCategory)?.name;
+
+  const [wishlistIds, setWishlistIds] = useState(new Set());
+  const [busyId, setBusyId] = useState(null);
+
+  useEffect(() => {
+    if (!isLoggedIn) { setWishlistIds(new Set()); return; }
+    fetch(`${API}/api/wishlist`, { headers: { Authorization: `Bearer ${authToken}` } })
+      .then((r) => r.json())
+      .then((rows) => setWishlistIds(new Set(rows.map((r) => r.id))))
+      .catch((e) => console.error(e));
+  }, [isLoggedIn, authToken]);
+
+  async function toggleWishlist(e, productId) {
+    e.stopPropagation();
+    if (!isLoggedIn) return onGoLogin();
+    setBusyId(productId);
+    try {
+      const inList = wishlistIds.has(productId);
+      await fetch(`${API}/api/wishlist/${productId}`, {
+        method: inList ? "DELETE" : "POST",
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      setWishlistIds((prev) => {
+        const next = new Set(prev);
+        inList ? next.delete(productId) : next.add(productId);
+        return next;
+      });
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-6">
@@ -892,6 +932,7 @@ function ProductListView({ products, loading, categories, activeCategory, onSele
             const compareAt = Number(p.compare_at_price || 0);
             const price = Number(p.price);
             const discount = compareAt ? Math.round((1 - price / compareAt) * 100) : 0;
+            const favorited = wishlistIds.has(p.id);
             return (
               <div
                 key={p.id}
@@ -905,6 +946,13 @@ function ProductListView({ products, loading, categories, activeCategory, onSele
                       -{discount}%
                     </span>
                   )}
+                  <button
+                    onClick={(e) => toggleWishlist(e, p.id)}
+                    disabled={busyId === p.id}
+                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/90 flex items-center justify-center shadow-sm hover:bg-white"
+                  >
+                    <Heart size={14} className={favorited ? "fill-red-500 text-red-500" : "text-gray-400"} />
+                  </button>
                 </div>
                 <div className="p-2.5">
                   <div className="text-xs text-gray-700 line-clamp-2 h-8">{p.name}</div>
@@ -1428,13 +1476,23 @@ function SellerDashboard({ authToken, categories }) {
 
   useEffect(() => { loadProducts(); }, []);
 
-  useEffect(() => {
-    if (tab !== "orders") return;
+  function loadOrders() {
     fetch(`${API}/api/seller/orders`, { headers: authHeaders() })
       .then((r) => r.json())
       .then(setOrders)
       .catch((err) => console.error(err));
+  }
+  useEffect(() => {
+    if (tab !== "orders") return;
+    loadOrders();
   }, [tab]);
+
+  async function updateOrderStatus(orderId, status) {
+    await fetch(`${API}/api/seller/orders/${orderId}/status`, {
+      method: "PUT", headers: authHeaders(), body: JSON.stringify({ status }),
+    });
+    loadOrders();
+  }
 
   async function toggleStatus(product) {
     const newStatus = product.status === "active" ? "draft" : "active";
@@ -1533,12 +1591,24 @@ function SellerDashboard({ authToken, categories }) {
         ) : (
           <div className="bg-white rounded-xl shadow-sm divide-y">
             {orders.map((o) => (
-              <div key={o.id} className="flex items-center justify-between p-3 text-sm">
-                <div>
-                  <div className="text-gray-800">{o.product_name} × {o.quantity}</div>
+              <div key={o.id} className="flex items-center justify-between p-3 text-sm gap-3">
+                <div className="min-w-0">
+                  <div className="text-gray-800 line-clamp-1">{o.product_name} × {o.quantity}</div>
                   <div className="text-xs text-gray-400 mt-0.5 font-mono">{o.order_no}</div>
                 </div>
-                <div className="font-semibold" style={{ color: "#b9791f" }}>฿{THB(o.line_total)}</div>
+                <div className="font-semibold shrink-0" style={{ color: "#b9791f" }}>฿{THB(o.line_total)}</div>
+                <select
+                  value={o.status}
+                  onChange={(e) => updateOrderStatus(o.order_id, e.target.value)}
+                  className="text-xs border rounded-lg px-2 py-1.5 outline-none shrink-0"
+                >
+                  <option value="pending" disabled>รอดำเนินการ</option>
+                  <option value="paid" disabled>ชำระเงินแล้ว</option>
+                  <option value="packed">แพ็คของแล้ว</option>
+                  <option value="shipped">จัดส่งแล้ว</option>
+                  <option value="delivered">ส่งถึงแล้ว</option>
+                  <option value="cancelled">ยกเลิก</option>
+                </select>
               </div>
             ))}
           </div>
@@ -1727,12 +1797,17 @@ function OrderHistoryView({ authToken, onBrowse }) {
         </div>
       ) : (
         <div className="space-y-3">
-          {orders.map((o) => (
+          {orders.map((o) => {
+            const statusLabels = {
+              pending: "รอดำเนินการ", paid: "ชำระเงินแล้ว", packed: "แพ็คของแล้ว",
+              shipped: "จัดส่งแล้ว", delivered: "ส่งถึงแล้ว", cancelled: "ยกเลิก", refunded: "คืนเงินแล้ว",
+            };
+            return (
             <div key={o.id} className="bg-white rounded-xl shadow-sm p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-mono text-sm text-gray-700">{o.order_no}</span>
                 <span className="text-[11px] px-2 py-1 rounded-full font-medium" style={{ background: "#ecfdf5", color: "#059669" }}>
-                  {o.status === "paid" ? "ชำระเงินแล้ว" : o.status}
+                  {statusLabels[o.status] || o.status}
                 </span>
               </div>
               {o.items.map((it, idx) => (
@@ -1745,7 +1820,8 @@ function OrderHistoryView({ authToken, onBrowse }) {
                 <span>ยอดรวม</span><span style={{ color: "#b9791f" }}>฿{THB(o.grand_total)}</span>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </main>
@@ -2178,5 +2254,249 @@ function CardForm({ authHeaders, onSaved }) {
         {saving ? "กำลังบันทึก..." : "บันทึกบัตร"}
       </button>
     </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wishlist — saved products.
+// ---------------------------------------------------------------------------
+
+function WishlistView({ authToken, onOpenProduct }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  function load() {
+    setLoading(true);
+    fetch(`${API}/api/wishlist`, { headers: { Authorization: `Bearer ${authToken}` } })
+      .then((r) => r.json()).then(setItems).catch((e) => console.error(e)).finally(() => setLoading(false));
+  }
+  useEffect(() => { load(); }, []);
+
+  async function remove(productId) {
+    await fetch(`${API}/api/wishlist/${productId}`, { method: "DELETE", headers: { Authorization: `Bearer ${authToken}` } });
+    load();
+  }
+
+  return (
+    <main className="max-w-5xl mx-auto px-4 py-6">
+      <h1 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <Heart size={20} style={{ color: "#c9982f" }} /> รายการโปรด
+      </h1>
+
+      {loading ? (
+        <div className="flex justify-center py-16 text-gray-400"><Loader2 className="animate-spin" size={24} /></div>
+      ) : items.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm p-16 text-center text-gray-400">
+          <Heart size={36} className="mx-auto mb-3 text-gray-300" />
+          ยังไม่มีสินค้าในรายการโปรด
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {items.map((p) => (
+            <div key={p.id} className="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition">
+              <div onClick={() => onOpenProduct(p.slug)} className="cursor-pointer aspect-square bg-gray-50">
+                <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
+              </div>
+              <div className="p-2.5">
+                <div onClick={() => onOpenProduct(p.slug)} className="text-xs text-gray-700 line-clamp-2 h-8 cursor-pointer">{p.name}</div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-sm font-semibold" style={{ color: "#b9791f" }}>฿{THB(p.price)}</span>
+                  <button onClick={() => remove(p.id)} className="text-gray-300 hover:text-red-400"><Trash size={14} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Public shop page.
+// ---------------------------------------------------------------------------
+
+function ShopView({ slug, onOpenProduct }) {
+  const [shop, setShop] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${API}/api/shops/${slug}`).then((r) => r.json()).then(setShop).catch((e) => console.error(e)).finally(() => setLoading(false));
+  }, [slug]);
+
+  if (loading) {
+    return <div className="flex justify-center py-24 text-gray-400"><Loader2 className="animate-spin" size={26} /></div>;
+  }
+  if (!shop || shop.error) {
+    return <div className="max-w-xl mx-auto mt-10 text-center text-gray-400">ไม่พบร้านค้านี้</div>;
+  }
+
+  return (
+    <main className="max-w-6xl mx-auto px-4 py-6">
+      <div className="bg-white rounded-2xl shadow-sm p-5 flex items-center gap-4 mb-5">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center shrink-0" style={{ background: "#0b1a3d" }}>
+          <Store size={28} className="text-amber-300" />
+        </div>
+        <div>
+          <div className="font-semibold text-gray-800 text-lg flex items-center gap-2">
+            {shop.shop_name}
+            {shop.is_verified && <ShieldCheck size={16} className="text-amber-500" />}
+          </div>
+          <div className="text-sm text-gray-500 mt-0.5">
+            คะแนนร้าน {shop.rating_avg || "-"} · สินค้า {shop.products.length} รายการ
+          </div>
+          {shop.description && <p className="text-sm text-gray-500 mt-1">{shop.description}</p>}
+        </div>
+      </div>
+
+      {shop.products.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm p-16 text-center text-gray-400">ร้านนี้ยังไม่มีสินค้าวางขาย</div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {shop.products.map((p) => (
+            <div key={p.id} onClick={() => onOpenProduct(p.slug)} className="bg-white rounded-xl shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition">
+              <img src={p.image} alt={p.name} className="w-full aspect-square object-cover" />
+              <div className="p-2.5">
+                <div className="text-xs text-gray-700 line-clamp-2 h-8">{p.name}</div>
+                <div className="text-sm font-semibold mt-1" style={{ color: "#b9791f" }}>฿{THB(p.price)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin dashboard — users, products, orders across the whole marketplace.
+// ---------------------------------------------------------------------------
+
+function AdminDashboard({ authToken }) {
+  const [tab, setTab] = useState("users"); // users | products | orders
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` };
+
+  return (
+    <main className="max-w-6xl mx-auto px-4 py-6">
+      <h1 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <ShieldCheck size={20} className="text-red-500" /> แผงควบคุมแอดมิน
+      </h1>
+      <div className="flex gap-2 mb-4">
+        {[{ id: "users", label: "ผู้ใช้งาน" }, { id: "products", label: "สินค้าทั้งหมด" }, { id: "orders", label: "คำสั่งซื้อทั้งหมด" }].map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className="px-3 py-1.5 rounded-full text-xs border"
+            style={tab === t.id ? { borderColor: "#c9982f", background: "#fff8ec", color: "#8a6417" } : { borderColor: "#e5e7eb", color: "#374151" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "users" && <AdminUsersTab headers={headers} />}
+      {tab === "products" && <AdminProductsTab headers={headers} />}
+      {tab === "orders" && <AdminOrdersTab headers={headers} />}
+    </main>
+  );
+}
+
+function AdminUsersTab({ headers }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  function load() {
+    setLoading(true);
+    fetch(`${API}/api/admin/users`, { headers }).then((r) => r.json()).then(setUsers).catch((e) => console.error(e)).finally(() => setLoading(false));
+  }
+  useEffect(() => { load(); }, []);
+
+  async function toggleActive(u) {
+    await fetch(`${API}/api/admin/users/${u.id}`, { method: "PUT", headers, body: JSON.stringify({ isActive: !u.is_active }) });
+    load();
+  }
+
+  if (loading) return <div className="flex justify-center py-16 text-gray-400"><Loader2 className="animate-spin" size={22} /></div>;
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm divide-y">
+      {users.map((u) => (
+        <div key={u.id} className="flex items-center gap-3 p-3 text-sm">
+          <div className="flex-1 min-w-0">
+            <div className="text-gray-800">{u.display_name} <span className="text-gray-400 font-normal">· {u.email}</span></div>
+            <div className="text-xs text-gray-400 mt-0.5">บทบาท: {u.role}{!u.is_active && " · ระงับการใช้งาน"}</div>
+          </div>
+          {u.role !== "admin" && (
+            <button onClick={() => toggleActive(u)}
+              className="text-xs px-3 py-1.5 rounded-full font-medium border"
+              style={u.is_active ? { borderColor: "#fca5a5", color: "#dc2626" } : { borderColor: "#86efac", color: "#16a34a" }}>
+              {u.is_active ? "ระงับผู้ใช้" : "ยกเลิกระงับ"}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminProductsTab({ headers }) {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  function load() {
+    setLoading(true);
+    fetch(`${API}/api/admin/products`, { headers }).then((r) => r.json()).then(setProducts).catch((e) => console.error(e)).finally(() => setLoading(false));
+  }
+  useEffect(() => { load(); }, []);
+
+  async function toggleBan(p) {
+    const newStatus = p.status === "banned" ? "active" : "banned";
+    await fetch(`${API}/api/admin/products/${p.id}`, { method: "PUT", headers, body: JSON.stringify({ status: newStatus }) });
+    load();
+  }
+
+  if (loading) return <div className="flex justify-center py-16 text-gray-400"><Loader2 className="animate-spin" size={22} /></div>;
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm divide-y">
+      {products.map((p) => (
+        <div key={p.id} className="flex items-center gap-3 p-3">
+          <img src={p.image} className="w-12 h-12 rounded-lg object-cover bg-gray-50" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm text-gray-800 line-clamp-1">{p.name}</div>
+            <div className="text-xs text-gray-400 mt-0.5">ร้าน {p.seller_name} · ฿{THB(p.price)} · สต็อก {p.stock}</div>
+          </div>
+          <span className="text-[11px] px-2 py-1 rounded-full font-medium"
+            style={p.status === "banned" ? { background: "#fee2e2", color: "#dc2626" } : { background: "#ecfdf5", color: "#059669" }}>
+            {p.status === "banned" ? "ถูกระงับ" : p.status}
+          </span>
+          <button onClick={() => toggleBan(p)} className="text-xs font-medium" style={{ color: "#b9791f" }}>
+            {p.status === "banned" ? "ยกเลิกระงับ" : "ระงับสินค้า"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminOrdersTab({ headers }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/orders`, { headers }).then((r) => r.json()).then(setOrders).catch((e) => console.error(e)).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="flex justify-center py-16 text-gray-400"><Loader2 className="animate-spin" size={22} /></div>;
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm divide-y">
+      {orders.map((o) => (
+        <div key={o.id} className="flex items-center gap-3 p-3 text-sm">
+          <div className="flex-1 min-w-0">
+            <div className="font-mono text-gray-800">{o.order_no}</div>
+            <div className="text-xs text-gray-400 mt-0.5">ผู้ซื้อ {o.buyer_name} · {o.status}</div>
+          </div>
+          <div className="font-semibold" style={{ color: "#b9791f" }}>฿{THB(o.grand_total)}</div>
+        </div>
+      ))}
+    </div>
   );
 }
