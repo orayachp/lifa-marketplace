@@ -100,7 +100,7 @@ router.get("/mine", requireAuth, async (req, res) => {
 
     const orderIds = orders.map((o) => o.id);
     const { rows: items } = await pool.query(
-      `SELECT order_id, product_name, unit_price, quantity, line_total FROM order_items WHERE order_id = ANY($1)`,
+      `SELECT id, order_id, product_id, product_name, unit_price, quantity, line_total FROM order_items WHERE order_id = ANY($1)`,
       [orderIds]
     );
     const itemsByOrder = {};

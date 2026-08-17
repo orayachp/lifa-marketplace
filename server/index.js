@@ -14,6 +14,7 @@ const wishlistRouter = require("./routes/wishlist");
 const reviewsRouter = require("./routes/reviews");
 const shopsRouter = require("./routes/shops");
 const adminRouter = require("./routes/admin");
+const chatRouter = require("./routes/chat");
 
 const app = express();
 app.use(cors());
@@ -33,6 +34,7 @@ app.use("/api/wishlist", wishlistRouter);
 app.use("/api/reviews", reviewsRouter);
 app.use("/api/shops", shopsRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/chat", chatRouter);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 

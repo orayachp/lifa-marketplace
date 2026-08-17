@@ -3,7 +3,7 @@ import {
   Search, ShoppingCart, Heart, Star, ChevronRight, Minus, Plus,
   ShieldCheck, Truck, RotateCcw, Store, Trash2, ChevronLeft, Menu, Loader2,
   MapPin, CreditCard, Landmark, Wallet, CheckCircle2, Copy, Home,
-  User, LogOut, Mail, Lock, Phone, Tag, X, Package, PlusCircle, Edit3, Trash, ImagePlus
+  User, LogOut, Mail, Lock, Phone, Tag, X, Package, PlusCircle, Edit3, Trash, ImagePlus, MessageCircle, Send
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -176,6 +176,14 @@ export default function App() {
     setShopSlug(slug);
     setView("shop");
   }
+  const [chatSellerId, setChatSellerId] = useState(null);
+  const [chatProductId, setChatProductId] = useState(null);
+  function openChat(sellerId, productId = null) {
+    if (!authUser) { setView("login"); return; }
+    setChatSellerId(sellerId);
+    setChatProductId(productId);
+    setView("chat");
+  }
 
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const cartTotal = useMemo(() => cart.reduce((s, i) => s + i.price * i.qty, 0), [cart]);
@@ -260,6 +268,9 @@ export default function App() {
               <button onClick={() => setView("orders")} className="flex items-center gap-1 text-amber-100/90 hover:text-amber-200 text-sm">
                 <Package size={15} /> คำสั่งซื้อ
               </button>
+              <button onClick={() => setView("chat")} className="flex items-center gap-1 text-amber-100/90 hover:text-amber-200 text-sm">
+                <MessageCircle size={15} /> แชท
+              </button>
               <button onClick={() => setView("profile")} className="flex items-center gap-1.5 text-amber-100 hover:text-amber-200 text-sm">
                 <User size={16} /> {authUser.display_name}
               </button>
@@ -325,6 +336,7 @@ export default function App() {
           qty={qty} setQty={setQty} addToCart={addToCart}
           onHome={() => openList(null)}
           onOpenShop={openShop}
+          onOpenChat={openChat}
           authToken={authToken} isLoggedIn={!!authUser}
           onGoLogin={() => setView("login")}
         />
@@ -390,6 +402,9 @@ export default function App() {
       {view === "admin" && authUser?.role === "admin" && (
         <AdminDashboard authToken={authToken} />
       )}
+      {view === "chat" && authUser && (
+        <ChatView authToken={authToken} authUserId={authUser.id} initialSellerId={chatSellerId} initialProductId={chatProductId} />
+      )}
 
       <footer className="bg-[#0b1a3d] text-amber-100/50 text-xs text-center py-6 mt-10">
         © 2026 LiFa Marketplace — ข้อมูลสินค้าดึงจาก Neon Postgres แบบเรียลไทม์
@@ -402,7 +417,7 @@ export default function App() {
 
 function ProductView({
   product, activeImg, setActiveImg, variantId, setVariantId, qty, setQty, addToCart, onHome,
-  onOpenShop, authToken, isLoggedIn, onGoLogin,
+  onOpenShop, onOpenChat, authToken, isLoggedIn, onGoLogin,
 }) {
   const compareAt = Number(product.compare_at_price || 0);
   const price = Number(product.price);
@@ -533,11 +548,20 @@ function ProductView({
             </div>
             <div className="text-xs text-gray-500 mt-1">คะแนนร้าน {product.shop_rating}</div>
           </div>
-          {product.shop_slug && (
-            <button onClick={() => onOpenShop(product.shop_slug)} className="border rounded-lg px-4 py-2 text-sm font-medium" style={{ borderColor: "#c9982f", color: "#8a6417" }}>
-              ดูร้านค้า
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => (isLoggedIn ? onOpenChat(product.seller_id, product.id) : onGoLogin())}
+              className="border rounded-lg px-4 py-2 text-sm font-medium flex items-center gap-1.5"
+              style={{ borderColor: "#c9982f", color: "#8a6417" }}
+            >
+              <MessageCircle size={15} /> แชท
             </button>
-          )}
+            {product.shop_slug && (
+              <button onClick={() => onOpenShop(product.shop_slug)} className="border rounded-lg px-4 py-2 text-sm font-medium" style={{ borderColor: "#c9982f", color: "#8a6417" }}>
+                ดูร้านค้า
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1770,14 +1794,26 @@ function NewProductForm({ categories, authHeaders, onCreated }) {
 function OrderHistoryView({ authToken, onBrowse }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [reviewableIds, setReviewableIds] = useState(new Set()); // set of order_item_id
+  const [reviewingItem, setReviewingItem] = useState(null); // order_item_id currently being reviewed
 
-  useEffect(() => {
+  function load() {
     fetch(`${API}/api/orders/mine`, { headers: { Authorization: `Bearer ${authToken}` } })
       .then((r) => r.json())
       .then(setOrders)
       .catch((err) => console.error(err))
       .finally(() => setLoading(false));
-  }, []);
+    fetch(`${API}/api/reviews/reviewable`, { headers: { Authorization: `Bearer ${authToken}` } })
+      .then((r) => r.json())
+      .then((rows) => setReviewableIds(new Set(rows.map((r) => r.order_item_id))))
+      .catch((err) => console.error(err));
+  }
+  useEffect(() => { load(); }, []);
+
+  function handleReviewed() {
+    setReviewingItem(null);
+    load();
+  }
 
   return (
     <main className="max-w-3xl mx-auto px-4 py-6">
@@ -1811,9 +1847,26 @@ function OrderHistoryView({ authToken, onBrowse }) {
                 </span>
               </div>
               {o.items.map((it, idx) => (
-                <div key={idx} className="flex justify-between text-sm text-gray-600 mb-1">
-                  <span className="line-clamp-1 pr-2">{it.product_name} × {it.quantity}</span>
-                  <span className="shrink-0">฿{THB(it.line_total)}</span>
+                <div key={idx} className="mb-1.5">
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span className="line-clamp-1 pr-2">{it.product_name} × {it.quantity}</span>
+                    <span className="shrink-0">฿{THB(it.line_total)}</span>
+                  </div>
+                  {reviewableIds.has(it.id) && (
+                    reviewingItem === it.id ? (
+                      <InlineReviewForm
+                        authToken={authToken}
+                        productId={it.product_id}
+                        orderItemId={it.id}
+                        onDone={handleReviewed}
+                        onCancel={() => setReviewingItem(null)}
+                      />
+                    ) : (
+                      <button onClick={() => setReviewingItem(it.id)} className="text-xs font-medium mt-1" style={{ color: "#b9791f" }}>
+                        ★ เขียนรีวิวสินค้านี้
+                      </button>
+                    )
+                  )}
                 </div>
               ))}
               <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold text-gray-800">
@@ -1825,6 +1878,56 @@ function OrderHistoryView({ authToken, onBrowse }) {
         </div>
       )}
     </main>
+  );
+}
+
+function InlineReviewForm({ authToken, productId, orderItemId, onDone, onCancel }) {
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    setSubmitting(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/api/reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({ productId, orderItemId, rating, comment }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "ส่งรีวิวไม่สำเร็จ");
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="border rounded-lg p-3 mt-1.5 bg-amber-50/40 space-y-2">
+      <div className="flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} type="button" onClick={() => setRating(n)}>
+            <Star size={18} className={n <= rating ? "fill-amber-400 text-amber-400" : "text-gray-300"} />
+          </button>
+        ))}
+      </div>
+      <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2}
+        placeholder="เล่าประสบการณ์การใช้งานสินค้านี้..."
+        className="w-full border rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-amber-400" />
+      {error && <div className="text-xs text-red-500">{error}</div>}
+      <div className="flex gap-2">
+        <button onClick={submit} disabled={submitting}
+          className="text-xs font-medium rounded-lg px-3 py-1.5 text-white disabled:opacity-70"
+          style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}>
+          {submitting ? "กำลังส่ง..." : "ส่งรีวิว"}
+        </button>
+        <button onClick={onCancel} className="text-xs text-gray-400">ยกเลิก</button>
+      </div>
+    </div>
   );
 }
 
@@ -2498,5 +2601,171 @@ function AdminOrdersTab({ headers }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Chat — buyer/seller inbox + message thread. If opened from a product page
+// (initialSellerId set), it starts/opens that conversation directly.
+// Polls for new messages every few seconds while a thread is open (no
+// websockets in this stack, so this keeps it simple).
+// ---------------------------------------------------------------------------
+
+function ChatView({ authToken, authUserId, initialSellerId, initialProductId }) {
+  const [conversations, setConversations] = useState([]);
+  const [loadingList, setLoadingList] = useState(true);
+  const [activeId, setActiveId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const bottomRef = React.useRef(null);
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` };
+  }
+
+  function loadConversations() {
+    fetch(`${API}/api/chat/conversations`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then(setConversations)
+      .catch((e) => console.error(e))
+      .finally(() => setLoadingList(false));
+  }
+  useEffect(() => { loadConversations(); }, []);
+
+  // If arriving from a product page with a specific seller, start/open that thread.
+  useEffect(() => {
+    if (!initialSellerId) return;
+    fetch(`${API}/api/chat/start`, {
+      method: "POST", headers: authHeaders(),
+      body: JSON.stringify({ sellerId: initialSellerId, productId: initialProductId }),
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.conversationId) setActiveId(d.conversationId); })
+      .catch((e) => console.error(e));
+  }, [initialSellerId, initialProductId]);
+
+  function loadMessages(id) {
+    fetch(`${API}/api/chat/conversations/${id}/messages`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((rows) => {
+        setMessages(rows);
+        loadConversations(); // refresh unread badges
+      })
+      .catch((e) => console.error(e));
+  }
+
+  useEffect(() => {
+    if (!activeId) return;
+    loadMessages(activeId);
+    const interval = setInterval(() => loadMessages(activeId), 4000);
+    return () => clearInterval(interval);
+  }, [activeId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function sendMessage(e) {
+    e.preventDefault();
+    if (!input.trim() || !activeId) return;
+    setSending(true);
+    try {
+      const res = await fetch(`${API}/api/chat/conversations/${activeId}/messages`, {
+        method: "POST", headers: authHeaders(), body: JSON.stringify({ body: input.trim() }),
+      });
+      if (res.ok) {
+        setInput("");
+        loadMessages(activeId);
+      }
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const activeConvo = conversations.find((c) => c.id === activeId);
+
+  return (
+    <main className="max-w-4xl mx-auto px-4 py-6">
+      <h1 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <MessageCircle size={20} style={{ color: "#c9982f" }} /> แชท
+      </h1>
+
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden grid md:grid-cols-3" style={{ height: 520 }}>
+        {/* conversation list */}
+        <div className={`border-r overflow-y-auto ${activeId ? "hidden md:block" : ""}`}>
+          {loadingList ? (
+            <div className="flex justify-center py-10 text-gray-400"><Loader2 className="animate-spin" size={20} /></div>
+          ) : conversations.length === 0 ? (
+            <div className="p-6 text-center text-sm text-gray-400">ยังไม่มีบทสนทนา</div>
+          ) : (
+            conversations.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setActiveId(c.id)}
+                className="w-full text-left px-4 py-3 border-b hover:bg-gray-50 flex items-center gap-2"
+                style={activeId === c.id ? { background: "#fff8ec" } : {}}
+              >
+                <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: "#0b1a3d" }}>
+                  {c.seller_id === authUserId ? <User size={16} className="text-amber-300" /> : <Store size={16} className="text-amber-300" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-gray-800 line-clamp-1">{c.other_name || "ผู้ใช้"}</div>
+                  <div className="text-xs text-gray-400 line-clamp-1">{c.last_message || "เริ่มบทสนทนา"}</div>
+                </div>
+                {Number(c.unread_count) > 0 && (
+                  <span className="bg-red-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shrink-0">
+                    {c.unread_count}
+                  </span>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* thread */}
+        <div className={`md:col-span-2 flex flex-col ${activeId ? "" : "hidden md:flex"}`}>
+          {!activeId ? (
+            <div className="flex-1 flex items-center justify-center text-sm text-gray-400">เลือกบทสนทนาทางซ้าย</div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 border-b px-4 py-3">
+                <button onClick={() => setActiveId(null)} className="md:hidden text-gray-400"><ChevronLeft size={18} /></button>
+                <span className="text-sm font-medium text-gray-800">{activeConvo?.other_name || "..."}</span>
+              </div>
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                {messages.map((m) => {
+                  const mine = m.sender_id === authUserId;
+                  return (
+                    <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className="max-w-[75%] rounded-2xl px-3 py-2 text-sm"
+                        style={mine ? { background: "linear-gradient(135deg,#e0b45a,#b9791f)", color: "#fff" } : { background: "#f3f4f6", color: "#374151" }}
+                      >
+                        {m.body}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={bottomRef} />
+              </div>
+              <form onSubmit={sendMessage} className="flex items-center gap-2 border-t p-3">
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="พิมพ์ข้อความ..."
+                  className="flex-1 border rounded-full px-4 py-2 text-sm outline-none focus:border-amber-400"
+                />
+                <button type="submit" disabled={sending || !input.trim()}
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 shrink-0"
+                  style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}>
+                  <Send size={16} />
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    </main>
   );
 }

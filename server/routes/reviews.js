@@ -36,9 +36,30 @@ router.get("/mine/:productId", optionalAuth, async (req, res) => {
   }
 });
 
-// POST /api/reviews — { productId, rating, comment }
+// GET /api/reviews/reviewable — order items the logged-in buyer can leave a
+// review for right now (bought it, hasn't reviewed that product yet).
+router.get("/reviewable", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT oi.id AS order_item_id, oi.product_id, oi.product_name, o.order_no, o.created_at
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       WHERE o.buyer_id = $1 AND o.status != 'cancelled'
+         AND NOT EXISTS (SELECT 1 FROM reviews r WHERE r.product_id = oi.product_id AND r.buyer_id = $1)
+       ORDER BY o.created_at DESC
+       LIMIT 50`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "โหลดรายการที่รีวิวได้ไม่สำเร็จ" });
+  }
+});
+
+// POST /api/reviews — { productId, rating, comment, orderItemId? }
 router.post("/", requireAuth, async (req, res) => {
-  const { productId, rating, comment } = req.body;
+  const { productId, rating, comment, orderItemId } = req.body;
   if (!productId || !rating || rating < 1 || rating > 5) {
     return res.status(400).json({ error: "กรุณาให้คะแนน 1-5 ดาว" });
   }
@@ -57,8 +78,8 @@ router.post("/", requireAuth, async (req, res) => {
     }
 
     await client.query(
-      "INSERT INTO reviews (product_id, buyer_id, rating, comment) VALUES ($1, $2, $3, $4)",
-      [productId, req.user.id, rating, comment || null]
+      "INSERT INTO reviews (product_id, buyer_id, order_item_id, rating, comment) VALUES ($1, $2, $3, $4, $5)",
+      [productId, req.user.id, orderItemId || null, rating, comment || null]
     );
 
     // recompute the product's aggregate rating
