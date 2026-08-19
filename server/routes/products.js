@@ -3,11 +3,12 @@ const pool = require("../db");
 
 const router = express.Router();
 
-// GET /api/products — list products, optionally filtered by category and/or search query
-// e.g. /api/products?category=mobile-tablet&q=samsung
+// GET /api/products — list products, filterable by category, search text
+// (matches product name/description OR shop name), price range, and sortable.
+// e.g. /api/products?category=mobile-tablet&q=samsung&minPrice=1000&maxPrice=5000&sort=price_asc
 router.get("/", async (req, res) => {
   try {
-    const { category, q } = req.query;
+    const { category, q, minPrice, maxPrice, sort } = req.query;
     const params = [];
     let where = "WHERE p.status = 'active'";
     if (category) {
@@ -16,17 +17,36 @@ router.get("/", async (req, res) => {
     }
     if (q) {
       params.push(`%${q}%`);
-      where += ` AND (p.name ILIKE $${params.length} OR p.description ILIKE $${params.length})`;
+      where += ` AND (p.name ILIKE $${params.length} OR p.description ILIKE $${params.length} OR sp.shop_name ILIKE $${params.length})`;
     }
+    if (minPrice) {
+      params.push(Number(minPrice));
+      where += ` AND p.price >= $${params.length}`;
+    }
+    if (maxPrice) {
+      params.push(Number(maxPrice));
+      where += ` AND p.price <= $${params.length}`;
+    }
+
+    const sortMap = {
+      price_asc: "p.price ASC",
+      price_desc: "p.price DESC",
+      rating: "p.rating_avg DESC NULLS LAST",
+      sold: "p.sold_count DESC",
+      newest: "p.created_at DESC",
+    };
+    const orderBy = sortMap[sort] || sortMap.newest;
 
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.slug, p.price, p.compare_at_price, p.rating_avg,
               p.rating_count, p.sold_count, c.slug AS category_slug, c.name AS category_name,
+              sp.shop_name,
               (SELECT url FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order LIMIT 1) AS image
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN seller_profiles sp ON sp.user_id = p.seller_id
        ${where}
-       ORDER BY p.created_at DESC
+       ORDER BY ${orderBy}
        LIMIT 60`,
       params
     );

@@ -3,8 +3,7 @@ import {
   Search, ShoppingCart, Heart, Star, ChevronRight, Minus, Plus,
   ShieldCheck, Truck, RotateCcw, Store, Trash2, ChevronLeft, Menu, Loader2,
   MapPin, CreditCard, Landmark, Wallet, CheckCircle2, Copy, Home,
-  User, LogOut, Mail, Lock, Phone, Tag, X, Package, PlusCircle, Edit3, Trash, ImagePlus, MessageCircle, Send,
-  SlidersHorizontal, Bell
+  User, LogOut, Mail, Lock, Phone, Tag, X, Package, PlusCircle, Edit3, Trash, ImagePlus, MessageCircle, Send
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -88,71 +87,6 @@ export default function App() {
     setAuthUser(null);
     setView("list");
   }
-
-  // --- Chat unread polling (header badge + toast on new message) ------
-  const [chatUnread, setChatUnread] = useState(0);
-  const chatUnreadRef = React.useRef(0);
-  useEffect(() => {
-    if (!authUser) { setChatUnread(0); chatUnreadRef.current = 0; return; }
-    function poll() {
-      fetch(`${API}/api/chat/unread-count`, { headers: { Authorization: `Bearer ${authToken}` } })
-        .then((r) => r.json())
-        .then((data) => {
-          const count = data.count || 0;
-          if (count > chatUnreadRef.current) {
-            showToast("มีข้อความใหม่ในแชท");
-          }
-          chatUnreadRef.current = count;
-          setChatUnread(count);
-        })
-        .catch((e) => console.error(e));
-    }
-    poll();
-    const interval = setInterval(poll, 8000);
-    return () => clearInterval(interval);
-  }, [authUser, authToken]);
-
-  // --- General notifications polling (order status, new orders, returns) ---
-  const [notifUnread, setNotifUnread] = useState(0);
-  const notifUnreadRef = React.useRef(0);
-  const [showNotifPanel, setShowNotifPanel] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  useEffect(() => {
-    if (!authUser) { setNotifUnread(0); notifUnreadRef.current = 0; return; }
-    function poll() {
-      fetch(`${API}/api/notifications/unread-count`, { headers: { Authorization: `Bearer ${authToken}` } })
-        .then((r) => r.json())
-        .then((data) => {
-          const count = data.count || 0;
-          if (count > notifUnreadRef.current) {
-            showToast("มีการแจ้งเตือนใหม่");
-          }
-          notifUnreadRef.current = count;
-          setNotifUnread(count);
-        })
-        .catch((e) => console.error(e));
-    }
-    poll();
-    const interval = setInterval(poll, 8000);
-    return () => clearInterval(interval);
-  }, [authUser, authToken]);
-
-  function openNotifPanel() {
-    setShowNotifPanel((s) => !s);
-    if (!showNotifPanel) {
-      fetch(`${API}/api/notifications`, { headers: { Authorization: `Bearer ${authToken}` } })
-        .then((r) => r.json())
-        .then(setNotifications)
-        .catch((e) => console.error(e));
-      fetch(`${API}/api/notifications/read-all`, { method: "PUT", headers: { Authorization: `Bearer ${authToken}` } })
-        .then(() => { setNotifUnread(0); notifUnreadRef.current = 0; })
-        .catch((e) => console.error(e));
-    }
-  }
-  function handleNotifClick(n) {
-    setShowNotifPanel(false);
-    if (n.link_view) setView(n.link_view);
-  }
   function goToCheckout() {
     if (!authUser) {
       setPendingCheckout(true);
@@ -207,26 +141,21 @@ export default function App() {
       });
   }, [selectedSlug]);
 
-  // Load the product grid whenever the view is "list", or the category/search/filter changes
+  // Load the product grid whenever the view is "list", or the category/search changes
   const [searchQuery, setSearchQuery] = useState(null); // null = not searching
   const [searchInput, setSearchInput] = useState("");
-  const [sortBy, setSortBy] = useState("newest");
-  const [priceRange, setPriceRange] = useState({ min: "", max: "" });
   useEffect(() => {
     if (view !== "list") return;
     setListLoading(true);
     const params = new URLSearchParams();
     if (activeCategory) params.set("category", activeCategory);
     if (searchQuery) params.set("q", searchQuery);
-    if (sortBy && sortBy !== "newest") params.set("sort", sortBy);
-    if (priceRange.min) params.set("minPrice", priceRange.min);
-    if (priceRange.max) params.set("maxPrice", priceRange.max);
     fetch(`${API}/api/products?${params.toString()}`)
       .then((r) => r.json())
       .then(setListProducts)
       .catch((err) => console.error(err))
       .finally(() => setListLoading(false));
-  }, [view, activeCategory, searchQuery, sortBy, priceRange]);
+  }, [view, activeCategory, searchQuery]);
 
   function openProduct(slug) {
     setSelectedSlug(slug);
@@ -235,8 +164,6 @@ export default function App() {
   function openList(categorySlug = null) {
     setActiveCategory(categorySlug);
     setSearchQuery(null);
-    setSortBy("newest");
-    setPriceRange({ min: "", max: "" });
     setView("list");
   }
   function runSearch(term) {
@@ -341,45 +268,9 @@ export default function App() {
               <button onClick={() => setView("orders")} className="flex items-center gap-1 text-amber-100/90 hover:text-amber-200 text-sm">
                 <Package size={15} /> คำสั่งซื้อ
               </button>
-              <button onClick={() => setView("chat")} className="relative flex items-center gap-1 text-amber-100/90 hover:text-amber-200 text-sm">
+              <button onClick={() => setView("chat")} className="flex items-center gap-1 text-amber-100/90 hover:text-amber-200 text-sm">
                 <MessageCircle size={15} /> แชท
-                {chatUnread > 0 && (
-                  <span className="absolute -top-2 -right-2.5 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                    {chatUnread > 9 ? "9+" : chatUnread}
-                  </span>
-                )}
               </button>
-              <div className="relative">
-                <button onClick={openNotifPanel} className="relative flex items-center text-amber-100/90 hover:text-amber-200">
-                  <Bell size={17} />
-                  {notifUnread > 0 && (
-                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                      {notifUnread > 9 ? "9+" : notifUnread}
-                    </span>
-                  )}
-                </button>
-                {showNotifPanel && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-lg border overflow-hidden z-30">
-                    <div className="px-4 py-2.5 border-b text-sm font-medium text-gray-700">การแจ้งเตือน</div>
-                    <div className="max-h-80 overflow-y-auto">
-                      {notifications.length === 0 ? (
-                        <div className="p-6 text-center text-xs text-gray-400">ยังไม่มีการแจ้งเตือน</div>
-                      ) : (
-                        notifications.map((n) => (
-                          <button
-                            key={n.id}
-                            onClick={() => handleNotifClick(n)}
-                            className="w-full text-left px-4 py-3 border-b hover:bg-gray-50 last:border-b-0"
-                          >
-                            <div className="text-xs font-medium text-gray-800">{n.title}</div>
-                            {n.body && <div className="text-xs text-gray-500 mt-0.5">{n.body}</div>}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
               <button onClick={() => setView("profile")} className="flex items-center gap-1.5 text-amber-100 hover:text-amber-200 text-sm">
                 <User size={16} /> {authUser.display_name}
               </button>
@@ -456,9 +347,6 @@ export default function App() {
           categories={categories} activeCategory={activeCategory}
           onSelectCategory={openList} onOpenProduct={openProduct}
           authToken={authToken} isLoggedIn={!!authUser} onGoLogin={() => setView("login")}
-          sortBy={sortBy} setSortBy={setSortBy}
-          priceRange={priceRange} setPriceRange={setPriceRange}
-          searchActive={!!searchQuery}
         />
       )}
       {view === "cart" && (
@@ -515,11 +403,7 @@ export default function App() {
         <AdminDashboard authToken={authToken} />
       )}
       {view === "chat" && authUser && (
-        <ChatView
-          authToken={authToken} authUserId={authUser.id}
-          initialSellerId={chatSellerId} initialProductId={chatProductId}
-          onOpenProduct={openProduct}
-        />
+        <ChatView authToken={authToken} authUserId={authUser.id} initialSellerId={chatSellerId} initialProductId={chatProductId} />
       )}
 
       <footer className="bg-[#0b1a3d] text-amber-100/50 text-xs text-center py-6 mt-10">
@@ -995,17 +879,11 @@ function RegisterView({ onSuccess, onGoLogin }) {
 // Product listing — grid of products, filterable by category chips.
 // ---------------------------------------------------------------------------
 
-function ProductListView({
-  products, loading, categories, activeCategory, onSelectCategory, onOpenProduct, authToken, isLoggedIn, onGoLogin,
-  sortBy, setSortBy, priceRange, setPriceRange, searchActive,
-}) {
+function ProductListView({ products, loading, categories, activeCategory, onSelectCategory, onOpenProduct, authToken, isLoggedIn, onGoLogin }) {
   const activeCategoryName = categories.find((c) => c.slug === activeCategory)?.name;
 
   const [wishlistIds, setWishlistIds] = useState(new Set());
   const [busyId, setBusyId] = useState(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [minInput, setMinInput] = useState(priceRange.min);
-  const [maxInput, setMaxInput] = useState(priceRange.max);
 
   useEffect(() => {
     if (!isLoggedIn) { setWishlistIds(new Set()); return; }
@@ -1035,31 +913,15 @@ function ProductListView({
     }
   }
 
-  function applyPriceRange() {
-    setPriceRange({ min: minInput, max: maxInput });
-  }
-  function clearPriceRange() {
-    setMinInput(""); setMaxInput("");
-    setPriceRange({ min: "", max: "" });
-  }
-
-  const sortOptions = [
-    { id: "newest", label: "ใหม่ล่าสุด" },
-    { id: "price_asc", label: "ราคา: ต่ำ→สูง" },
-    { id: "price_desc", label: "ราคา: สูง→ต่ำ" },
-    { id: "sold", label: "ขายดีที่สุด" },
-    { id: "rating", label: "คะแนนสูงสุด" },
-  ];
-
   return (
     <main className="max-w-6xl mx-auto px-4 py-6">
       <h1 className="text-lg font-semibold text-gray-800 mb-1">
-        {searchActive ? "ผลการค้นหา" : activeCategoryName ? activeCategoryName : "สินค้าทั้งหมด"}
+        {activeCategoryName ? activeCategoryName : "สินค้าทั้งหมด"}
       </h1>
       <p className="text-sm text-gray-500 mb-4">{loading ? "กำลังโหลด..." : `พบ ${products.length} รายการ`}</p>
 
       {/* category chips (repeats the header nav, handy on mobile) */}
-      <div className="flex gap-2 overflow-x-auto pb-1 mb-3">
+      <div className="flex gap-2 overflow-x-auto pb-1 mb-5">
         <button
           onClick={() => onSelectCategory(null)}
           className="whitespace-nowrap px-3 py-1.5 rounded-full text-xs border"
@@ -1077,57 +939,6 @@ function ProductListView({
             {c.name}
           </button>
         ))}
-      </div>
-
-      {/* sort + price filter */}
-      <div className="flex flex-wrap items-center gap-2 mb-5">
-        <div className="flex gap-1.5 overflow-x-auto">
-          {sortOptions.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setSortBy(s.id)}
-              className="whitespace-nowrap px-3 py-1.5 rounded-lg text-xs border"
-              style={sortBy === s.id ? { borderColor: "#c9982f", background: "#fff8ec", color: "#8a6417" } : { borderColor: "#e5e7eb", color: "#374151" }}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <div className="relative">
-          <button
-            onClick={() => setShowFilters((s) => !s)}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border"
-            style={priceRange.min || priceRange.max ? { borderColor: "#c9982f", background: "#fff8ec", color: "#8a6417" } : { borderColor: "#e5e7eb", color: "#374151" }}
-          >
-            <SlidersHorizontal size={13} />
-            ช่วงราคา {(priceRange.min || priceRange.max) ? `฿${priceRange.min || 0}-${priceRange.max || "∞"}` : ""}
-          </button>
-          {showFilters && (
-            <div className="absolute z-20 mt-2 bg-white border rounded-xl shadow-lg p-4 w-64">
-              <div className="flex items-center gap-2 mb-3">
-                <input type="number" min="0" placeholder="ต่ำสุด" value={minInput}
-                  onChange={(e) => setMinInput(e.target.value)}
-                  className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none focus:border-amber-400" />
-                <span className="text-gray-400">-</span>
-                <input type="number" min="0" placeholder="สูงสุด" value={maxInput}
-                  onChange={(e) => setMaxInput(e.target.value)}
-                  className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none focus:border-amber-400" />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { applyPriceRange(); setShowFilters(false); }}
-                  className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white"
-                  style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}
-                >
-                  ใช้ตัวกรอง
-                </button>
-                <button onClick={() => { clearPriceRange(); setShowFilters(false); }} className="text-xs text-gray-400 px-2">
-                  ล้าง
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
       {loading ? (
@@ -1672,8 +1483,7 @@ function SellerDashboard({ authToken, categories }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [orders, setOrders] = useState([]);
-  const [returns, setReturns] = useState([]);
-  const [tab, setTab] = useState("products"); // products | orders | returns
+  const [tab, setTab] = useState("products"); // products | orders
 
   function authHeaders() {
     return { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` };
@@ -1700,24 +1510,6 @@ function SellerDashboard({ authToken, categories }) {
     if (tab !== "orders") return;
     loadOrders();
   }, [tab]);
-
-  function loadReturns() {
-    fetch(`${API}/api/seller/returns`, { headers: authHeaders() })
-      .then((r) => r.json())
-      .then(setReturns)
-      .catch((err) => console.error(err));
-  }
-  useEffect(() => {
-    if (tab !== "returns") return;
-    loadReturns();
-  }, [tab]);
-
-  async function decideReturn(id, status) {
-    await fetch(`${API}/api/seller/returns/${id}`, {
-      method: "PUT", headers: authHeaders(), body: JSON.stringify({ status }),
-    });
-    loadReturns();
-  }
 
   async function updateOrderStatus(orderId, status) {
     await fetch(`${API}/api/seller/orders/${orderId}/status`, {
@@ -1768,11 +1560,6 @@ function SellerDashboard({ authToken, categories }) {
           style={tab === "orders" ? { borderColor: "#c9982f", background: "#fff8ec", color: "#8a6417" } : { borderColor: "#e5e7eb", color: "#374151" }}>
           คำสั่งซื้อที่ได้รับ
         </button>
-        <button onClick={() => setTab("returns")}
-          className="px-3 py-1.5 rounded-full text-xs border"
-          style={tab === "returns" ? { borderColor: "#c9982f", background: "#fff8ec", color: "#8a6417" } : { borderColor: "#e5e7eb", color: "#374151" }}>
-          คำขอคืนสินค้า
-        </button>
       </div>
 
       {tab === "products" && showForm && (
@@ -1799,7 +1586,6 @@ function SellerDashboard({ authToken, categories }) {
                   <div className="text-sm text-gray-800 line-clamp-1">{p.name}</div>
                   <div className="text-xs text-gray-400 mt-0.5">
                     {p.category_name || "ไม่มีหมวดหมู่"} · สต็อก {p.stock} · ขายแล้ว {p.sold_count}
-                    {Number(p.variant_count) > 0 && ` · ${p.variant_count} ตัวเลือก`}
                   </div>
                 </div>
                 <div className="text-sm font-semibold" style={{ color: "#b9791f" }}>฿{THB(p.price)}</div>
@@ -1852,56 +1638,6 @@ function SellerDashboard({ authToken, categories }) {
           </div>
         )
       )}
-
-      {tab === "returns" && (
-        returns.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-sm p-12 text-center text-gray-400 text-sm">
-            ยังไม่มีคำขอคืนสินค้า
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl shadow-sm divide-y">
-            {returns.map((r) => {
-              const statusStyle = {
-                pending: { background: "#fff8ec", color: "#8a6417" },
-                approved: { background: "#ecfdf5", color: "#059669" },
-                rejected: { background: "#fee2e2", color: "#dc2626" },
-                refunded: { background: "#eff6ff", color: "#2563eb" },
-              };
-              const statusLabel = { pending: "รอพิจารณา", approved: "อนุมัติแล้ว", rejected: "ปฏิเสธแล้ว", refunded: "คืนเงินแล้ว" };
-              return (
-                <div key={r.id} className="p-3 text-sm">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-mono text-xs text-gray-700">{r.order_no}</span>
-                    <span className="text-[11px] px-2 py-1 rounded-full font-medium" style={statusStyle[r.status]}>
-                      {statusLabel[r.status]}
-                    </span>
-                  </div>
-                  <div className="text-xs text-gray-500 mb-1">ผู้ซื้อ: {r.buyer_name} · ยอด ฿{THB(r.grand_total)}</div>
-                  <div className="text-xs text-gray-600 mb-2">เหตุผล: "{r.reason}"</div>
-                  {r.status === "pending" && (
-                    <div className="flex gap-2">
-                      <button onClick={() => decideReturn(r.id, "approved")}
-                        className="text-xs font-medium rounded-lg px-3 py-1.5 border" style={{ borderColor: "#86efac", color: "#16a34a" }}>
-                        อนุมัติ
-                      </button>
-                      <button onClick={() => decideReturn(r.id, "rejected")}
-                        className="text-xs font-medium rounded-lg px-3 py-1.5 border" style={{ borderColor: "#fca5a5", color: "#dc2626" }}>
-                        ปฏิเสธ
-                      </button>
-                    </div>
-                  )}
-                  {r.status === "approved" && (
-                    <button onClick={() => decideReturn(r.id, "refunded")}
-                      className="text-xs font-medium rounded-lg px-3 py-1.5 border" style={{ borderColor: "#93c5fd", color: "#2563eb" }}>
-                      ยืนยันคืนเงินแล้ว
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )
-      )}
     </main>
   );
 }
@@ -1909,7 +1645,6 @@ function SellerDashboard({ authToken, categories }) {
 function NewProductForm({ categories, authHeaders, onCreated }) {
   const [form, setForm] = useState({ name: "", description: "", price: "", stock: "", categoryId: "" });
   const [imageFiles, setImageFiles] = useState([]); // [{file, preview}]
-  const [variants, setVariants] = useState([]); // [{name, priceDelta, stock, sku}]
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -1918,16 +1653,6 @@ function NewProductForm({ categories, authHeaders, onCreated }) {
 
   function set(field) {
     return (e) => setForm({ ...form, [field]: e.target.value });
-  }
-
-  function addVariant() {
-    setVariants((prev) => [...prev, { name: "", priceDelta: "", stock: "", sku: "" }]);
-  }
-  function updateVariant(idx, field, value) {
-    setVariants((prev) => prev.map((v, i) => (i === idx ? { ...v, [field]: value } : v)));
-  }
-  function removeVariant(idx) {
-    setVariants((prev) => prev.filter((_, i) => i !== idx));
   }
 
   function handleFilePick(e) {
@@ -1991,9 +1716,6 @@ function NewProductForm({ categories, authHeaders, onCreated }) {
           stock: Number(form.stock),
           categoryId: form.categoryId || null,
           images: imageUrls,
-          variants: variants
-            .filter((v) => v.name.trim())
-            .map((v) => ({ name: v.name, priceDelta: Number(v.priceDelta) || 0, stock: Number(v.stock) || 0, sku: v.sku || null })),
         }),
       });
       const data = await res.json();
@@ -2055,39 +1777,6 @@ function NewProductForm({ categories, authHeaders, onCreated }) {
         <p className="text-[11px] text-gray-400 mt-1.5">JPG, PNG, WEBP หรือ GIF แต่ละไฟล์ไม่เกิน 5MB</p>
       </div>
 
-      {/* variants — optional (color, size, etc.) */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="text-xs text-gray-500">ตัวเลือกสินค้า (ไม่บังคับ) เช่น สี, ไซส์</label>
-          <button type="button" onClick={addVariant} className="text-xs font-medium" style={{ color: "#b9791f" }}>
-            + เพิ่มตัวเลือก
-          </button>
-        </div>
-        {variants.length > 0 && (
-          <div className="space-y-2">
-            {variants.map((v, idx) => (
-              <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
-                <input placeholder="ชื่อตัวเลือก เช่น สีแดง / ไซส์ M" value={v.name}
-                  onChange={(e) => updateVariant(idx, "name", e.target.value)}
-                  className="col-span-5 border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-amber-400" />
-                <input type="number" placeholder="+ราคา" value={v.priceDelta}
-                  onChange={(e) => updateVariant(idx, "priceDelta", e.target.value)}
-                  className="col-span-3 border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-amber-400" />
-                <input type="number" placeholder="สต็อก" value={v.stock}
-                  onChange={(e) => updateVariant(idx, "stock", e.target.value)}
-                  className="col-span-3 border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-amber-400" />
-                <button type="button" onClick={() => removeVariant(idx)} className="col-span-1 text-gray-400 hover:text-red-500 flex justify-center">
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <p className="text-[11px] text-gray-400 mt-1.5">
-          "+ราคา" คือส่วนต่างจากราคาหลัก เช่น ราคาหลัก 100 บาท ตัวเลือกนี้ +20 จะขาย 120 บาท
-        </p>
-      </div>
-
       {error && <div className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
       <button type="submit" disabled={submitting}
         className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-70"
@@ -2107,7 +1796,6 @@ function OrderHistoryView({ authToken, onBrowse }) {
   const [loading, setLoading] = useState(true);
   const [reviewableIds, setReviewableIds] = useState(new Set()); // set of order_item_id
   const [reviewingItem, setReviewingItem] = useState(null); // order_item_id currently being reviewed
-  const [returningOrder, setReturningOrder] = useState(null); // order_id currently filling out return form
 
   function load() {
     fetch(`${API}/api/orders/mine`, { headers: { Authorization: `Bearer ${authToken}` } })
@@ -2124,10 +1812,6 @@ function OrderHistoryView({ authToken, onBrowse }) {
 
   function handleReviewed() {
     setReviewingItem(null);
-    load();
-  }
-  function handleReturned() {
-    setReturningOrder(null);
     load();
   }
 
@@ -2154,8 +1838,6 @@ function OrderHistoryView({ authToken, onBrowse }) {
               pending: "รอดำเนินการ", paid: "ชำระเงินแล้ว", packed: "แพ็คของแล้ว",
               shipped: "จัดส่งแล้ว", delivered: "ส่งถึงแล้ว", cancelled: "ยกเลิก", refunded: "คืนเงินแล้ว",
             };
-            const returnLabels = { pending: "รอร้านค้าพิจารณา", approved: "อนุมัติคำขอแล้ว", rejected: "ถูกปฏิเสธ", refunded: "คืนเงินแล้ว" };
-            const canRequestReturn = !o.return_status && !["cancelled", "refunded"].includes(o.status);
             return (
             <div key={o.id} className="bg-white rounded-xl shadow-sm p-4">
               <div className="flex items-center justify-between mb-2">
@@ -2190,71 +1872,12 @@ function OrderHistoryView({ authToken, onBrowse }) {
               <div className="border-t mt-2 pt-2 flex justify-between text-sm font-semibold text-gray-800">
                 <span>ยอดรวม</span><span style={{ color: "#b9791f" }}>฿{THB(o.grand_total)}</span>
               </div>
-
-              {/* return / refund */}
-              {o.return_status && (
-                <div className="mt-2 text-xs px-3 py-2 rounded-lg" style={{ background: "#fff8ec", color: "#8a6417" }}>
-                  คำขอคืนสินค้า: {returnLabels[o.return_status] || o.return_status}
-                  {o.return_reason && <span className="text-gray-500"> — "{o.return_reason}"</span>}
-                </div>
-              )}
-              {canRequestReturn && (
-                returningOrder === o.id ? (
-                  <InlineReturnForm authToken={authToken} orderId={o.id} onDone={handleReturned} onCancel={() => setReturningOrder(null)} />
-                ) : (
-                  <button onClick={() => setReturningOrder(o.id)} className="text-xs font-medium mt-2 flex items-center gap-1 text-gray-500 hover:text-red-500">
-                    <RotateCcw size={12} /> ขอคืนสินค้า/คืนเงิน
-                  </button>
-                )
-              )}
             </div>
             );
           })}
         </div>
       )}
     </main>
-  );
-}
-
-function InlineReturnForm({ authToken, orderId, onDone, onCancel }) {
-  const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-
-  async function submit() {
-    if (!reason.trim()) return setError("กรุณาระบุเหตุผล");
-    setSubmitting(true);
-    setError("");
-    try {
-      const res = await fetch(`${API}/api/orders/${orderId}/return`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
-        body: JSON.stringify({ reason }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "ส่งคำขอไม่สำเร็จ");
-      onDone();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="border rounded-lg p-3 mt-2 bg-red-50/30 space-y-2">
-      <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
-        placeholder="เหตุผลที่ต้องการคืนสินค้า/ขอเงินคืน..."
-        className="w-full border rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-red-300" />
-      {error && <div className="text-xs text-red-500">{error}</div>}
-      <div className="flex gap-2">
-        <button onClick={submit} disabled={submitting}
-          className="text-xs font-medium rounded-lg px-3 py-1.5 text-white disabled:opacity-70 bg-red-500 hover:bg-red-600">
-          {submitting ? "กำลังส่ง..." : "ส่งคำขอ"}
-        </button>
-        <button onClick={onCancel} className="text-xs text-gray-400">ยกเลิก</button>
-      </div>
-    </div>
   );
 }
 
@@ -2988,12 +2611,11 @@ function AdminOrdersTab({ headers }) {
 // websockets in this stack, so this keeps it simple).
 // ---------------------------------------------------------------------------
 
-function ChatView({ authToken, authUserId, initialSellerId, initialProductId, onOpenProduct }) {
+function ChatView({ authToken, authUserId, initialSellerId, initialProductId }) {
   const [conversations, setConversations] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [pinnedProduct, setPinnedProduct] = useState(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = React.useRef(null);
@@ -3026,9 +2648,8 @@ function ChatView({ authToken, authUserId, initialSellerId, initialProductId, on
   function loadMessages(id) {
     fetch(`${API}/api/chat/conversations/${id}/messages`, { headers: authHeaders() })
       .then((r) => r.json())
-      .then((data) => {
-        setMessages(data.messages || []);
-        setPinnedProduct(data.product || null);
+      .then((rows) => {
+        setMessages(rows);
         loadConversations(); // refresh unread badges
       })
       .catch((e) => console.error(e));
@@ -3070,7 +2691,7 @@ function ChatView({ authToken, authUserId, initialSellerId, initialProductId, on
         <MessageCircle size={20} style={{ color: "#c9982f" }} /> แชท
       </h1>
 
-      <div className="bg-white rounded-2xl shadow-sm overflow-hidden grid md:grid-cols-3" style={{ height: 560 }}>
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden grid md:grid-cols-3" style={{ height: 520 }}>
         {/* conversation list */}
         <div className={`border-r overflow-y-auto ${activeId ? "hidden md:block" : ""}`}>
           {loadingList ? (
@@ -3090,10 +2711,7 @@ function ChatView({ authToken, authUserId, initialSellerId, initialProductId, on
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-gray-800 line-clamp-1">{c.other_name || "ผู้ใช้"}</div>
-                  <div className="text-xs text-gray-400 line-clamp-1">
-                    {c.product_name && <span className="text-amber-600">[{c.product_name}] </span>}
-                    {c.last_message || "เริ่มบทสนทนา"}
-                  </div>
+                  <div className="text-xs text-gray-400 line-clamp-1">{c.last_message || "เริ่มบทสนทนา"}</div>
                 </div>
                 {Number(c.unread_count) > 0 && (
                   <span className="bg-red-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shrink-0">
@@ -3115,21 +2733,6 @@ function ChatView({ authToken, authUserId, initialSellerId, initialProductId, on
                 <button onClick={() => setActiveId(null)} className="md:hidden text-gray-400"><ChevronLeft size={18} /></button>
                 <span className="text-sm font-medium text-gray-800">{activeConvo?.other_name || "..."}</span>
               </div>
-
-              {pinnedProduct && (
-                <button
-                  onClick={() => onOpenProduct && onOpenProduct(pinnedProduct.slug)}
-                  className="flex items-center gap-2.5 px-4 py-2.5 border-b hover:bg-gray-50 text-left"
-                >
-                  <img src={pinnedProduct.image} className="w-10 h-10 rounded-lg object-cover bg-gray-50 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs text-gray-700 line-clamp-1">{pinnedProduct.name}</div>
-                    <div className="text-xs font-semibold" style={{ color: "#b9791f" }}>฿{THB(pinnedProduct.price)}</div>
-                  </div>
-                  <span className="text-[10px] text-gray-400 shrink-0">กำลังคุยเรื่องสินค้านี้</span>
-                </button>
-              )}
-
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
                 {messages.map((m) => {
                   const mine = m.sender_id === authUserId;
@@ -3150,7 +2753,7 @@ function ChatView({ authToken, authUserId, initialSellerId, initialProductId, on
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={pinnedProduct ? `ถามเกี่ยวกับ ${pinnedProduct.name}...` : "พิมพ์ข้อความ..."}
+                  placeholder="พิมพ์ข้อความ..."
                   className="flex-1 border rounded-full px-4 py-2 text-sm outline-none focus:border-amber-400"
                 />
                 <button type="submit" disabled={sending || !input.trim()}

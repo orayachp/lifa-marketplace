@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const multer = require("multer");
 const pool = require("../db");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { notify } = require("../lib/notify");
 
 const router = express.Router();
 router.use(requireAuth, requireRole("seller", "admin"));
@@ -64,7 +65,8 @@ router.get("/products", async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.slug, p.price, p.stock, p.status, p.sold_count, c.name AS category_name,
-              (SELECT url FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order LIMIT 1) AS image
+              (SELECT url FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order LIMIT 1) AS image,
+              (SELECT COUNT(*) FROM product_variants pv WHERE pv.product_id = p.id) AS variant_count
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        WHERE p.seller_id = $1
@@ -79,9 +81,10 @@ router.get("/products", async (req, res) => {
 });
 
 // POST /api/seller/products — create a new product
-// body: { name, description, price, compareAtPrice, stock, categoryId, images: [url,...] }
+// body: { name, description, price, compareAtPrice, stock, categoryId, images: [url,...],
+//         variants: [{name, priceDelta, stock, sku}, ...] }
 router.post("/products", async (req, res) => {
-  const { name, description, price, compareAtPrice, stock, categoryId, images } = req.body;
+  const { name, description, price, compareAtPrice, stock, categoryId, images, variants } = req.body;
   if (!name || price == null || stock == null) {
     return res.status(400).json({ error: "กรุณากรอกชื่อสินค้า ราคา และจำนวนสต็อก" });
   }
@@ -105,6 +108,16 @@ router.post("/products", async (req, res) => {
         "INSERT INTO product_images (product_id, url, sort_order) VALUES ($1, $2, $3)",
         [product.id, imgList[i], i]
       );
+    }
+
+    if (Array.isArray(variants)) {
+      for (const v of variants) {
+        if (!v.name || !v.name.trim()) continue;
+        await client.query(
+          "INSERT INTO product_variants (product_id, name, price_delta, stock, sku) VALUES ($1, $2, $3, $4, $5)",
+          [product.id, v.name.trim(), v.priceDelta || 0, v.stock || 0, v.sku || null]
+        );
+      }
     }
 
     await client.query("COMMIT");
@@ -179,13 +192,15 @@ router.get("/orders", async (req, res) => {
 });
 
 // PUT /api/seller/orders/:orderId/status — { status: 'packed'|'shipped'|'delivered'|... }
-// Only allowed if this seller has at least one item in the order.
+// Only allowed if this seller has at least one item in the order. Notifies the buyer.
 router.put("/orders/:orderId/status", async (req, res) => {
   const { status } = req.body;
   const allowed = ["packed", "shipped", "delivered", "cancelled"];
   if (!allowed.includes(status)) {
     return res.status(400).json({ error: "สถานะไม่ถูกต้อง" });
   }
+  const statusLabels = { packed: "แพ็คของแล้ว", shipped: "จัดส่งแล้ว", delivered: "ส่งถึงแล้ว", cancelled: "ยกเลิกแล้ว" };
+
   try {
     const { rows: owned } = await pool.query(
       "SELECT 1 FROM order_items WHERE order_id = $1 AND seller_id = $2 LIMIT 1",
@@ -194,13 +209,91 @@ router.put("/orders/:orderId/status", async (req, res) => {
     if (owned.length === 0) return res.status(404).json({ error: "ไม่พบคำสั่งซื้อนี้ในร้านของคุณ" });
 
     const { rows } = await pool.query(
-      "UPDATE orders SET status = $1, updated_at = now() WHERE id = $2 RETURNING id, order_no, status",
+      "UPDATE orders SET status = $1, updated_at = now() WHERE id = $2 RETURNING id, order_no, status, buyer_id",
       [status, req.params.orderId]
     );
-    res.json(rows[0]);
+    const order = rows[0];
+
+    await notify(null, {
+      userId: order.buyer_id,
+      type: "order_status",
+      title: `คำสั่งซื้อ ${order.order_no} ${statusLabels[status] || status}`,
+      body: null,
+      linkView: "orders",
+    });
+
+    res.json(order);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "อัปเดตสถานะไม่สำเร็จ" });
+  }
+});
+
+// GET /api/seller/returns — return requests for orders that include this seller's items
+router.get("/returns", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT rr.id, rr.order_id, rr.reason, rr.status, rr.created_at,
+              o.order_no, o.grand_total, u.display_name AS buyer_name
+       FROM return_requests rr
+       JOIN orders o ON o.id = rr.order_id
+       JOIN users u ON u.id = rr.buyer_id
+       JOIN order_items oi ON oi.order_id = rr.order_id AND oi.seller_id = $1
+       ORDER BY rr.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "โหลดคำขอคืนสินค้าไม่สำเร็จ" });
+  }
+});
+
+// PUT /api/seller/returns/:id — { status: 'approved'|'rejected'|'refunded' }
+router.put("/returns/:id", async (req, res) => {
+  const { status } = req.body;
+  const allowed = ["approved", "rejected", "refunded"];
+  if (!allowed.includes(status)) return res.status(400).json({ error: "สถานะไม่ถูกต้อง" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Confirm this seller actually has items in the order tied to this return request
+    const { rows: check } = await client.query(
+      `SELECT rr.id, rr.order_id, rr.buyer_id, o.order_no
+       FROM return_requests rr
+       JOIN orders o ON o.id = rr.order_id
+       WHERE rr.id = $1 AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = rr.order_id AND oi.seller_id = $2)`,
+      [req.params.id, req.user.id]
+    );
+    if (check.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "ไม่พบคำขอคืนสินค้านี้" });
+    }
+    const rr = check[0];
+
+    await client.query("UPDATE return_requests SET status = $1, updated_at = now() WHERE id = $2", [status, req.params.id]);
+    if (status === "refunded") {
+      await client.query("UPDATE orders SET status = 'refunded', updated_at = now() WHERE id = $1", [rr.order_id]);
+    }
+
+    const decisionLabels = { approved: "อนุมัติคำขอคืนสินค้าแล้ว", rejected: "ปฏิเสธคำขอคืนสินค้า", refunded: "คืนเงินเรียบร้อยแล้ว" };
+    await notify(client, {
+      userId: rr.buyer_id,
+      type: "return_decision",
+      title: `คำสั่งซื้อ ${rr.order_no}: ${decisionLabels[status]}`,
+      linkView: "orders",
+    });
+
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "อัปเดตคำขอคืนสินค้าไม่สำเร็จ" });
+  } finally {
+    client.release();
   }
 });
 
