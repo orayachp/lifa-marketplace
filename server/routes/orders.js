@@ -34,11 +34,25 @@ router.post("/", requireAuth, async (req, res) => {
     }
 
     const orderNo = `LF-${Date.now().toString().slice(-8)}`;
+
+    // Save the shipping address first so it can be linked to the order —
+    // previously this address was saved but never connected to orders.shipping_address_id,
+    // so sellers never actually saw where to ship the item.
+    let addressId = null;
+    if (address) {
+      const { rows: addressRows } = await client.query(
+        `INSERT INTO addresses (user_id, recipient_name, phone, line1, district, province, postal_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [req.user.id, address.name, address.phone, address.line1, address.district, address.province, address.postalCode]
+      );
+      addressId = addressRows[0].id;
+    }
+
     const { rows: orderRows } = await client.query(
-      `INSERT INTO orders (order_no, buyer_id, subtotal, shipping_fee, discount_total, grand_total, status, payment_status)
-       VALUES ($1, $2, $3, 0, $4, $5, 'paid', 'paid')
+      `INSERT INTO orders (order_no, buyer_id, shipping_address_id, subtotal, shipping_fee, discount_total, grand_total, status, payment_status)
+       VALUES ($1, $2, $3, $4, 0, $5, $6, 'paid', 'paid')
        RETURNING id, order_no, created_at`,
-      [orderNo, req.user.id, subtotal, discount, total]
+      [orderNo, req.user.id, addressId, subtotal, discount, total]
     );
     const order = orderRows[0];
 
@@ -55,14 +69,6 @@ router.post("/", requireAuth, async (req, res) => {
         [item.qty, item.id]
       );
       sellersToNotify.add(p.seller_id);
-    }
-
-    if (address) {
-      await client.query(
-        `INSERT INTO addresses (user_id, recipient_name, phone, line1, district, province, postal_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [req.user.id, address.name, address.phone, address.line1, address.district, address.province, address.postalCode]
-      );
     }
 
     if (couponCode) {

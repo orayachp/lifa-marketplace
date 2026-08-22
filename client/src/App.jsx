@@ -60,6 +60,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [pendingCheckout, setPendingCheckout] = useState(false); // came from "checkout" while logged out
+  const [resetPrefill, setResetPrefill] = useState({ email: "", token: "" });
 
   // On load, validate any stored token against the server
   useEffect(() => {
@@ -381,7 +382,12 @@ export default function App() {
                 )}
               </div>
               <button onClick={() => setView("profile")} className="flex items-center gap-1.5 text-amber-100 hover:text-amber-200 text-sm">
-                <User size={16} /> {authUser.display_name}
+                {authUser.avatar_url ? (
+                  <img src={authUser.avatar_url} className="w-5 h-5 rounded-full object-cover" />
+                ) : (
+                  <User size={16} />
+                )}
+                {authUser.display_name}
               </button>
               <button onClick={logout} className="text-amber-100/70 hover:text-amber-200" title="ออกจากระบบ">
                 <LogOut size={17} />
@@ -472,11 +478,26 @@ export default function App() {
         <LoginView
           onSuccess={handleAuthSuccess}
           onGoRegister={() => setView("register")}
+          onGoForgotPassword={() => setView("forgot-password")}
         />
       )}
       {view === "register" && (
         <RegisterView
           onSuccess={handleAuthSuccess}
+          onGoLogin={() => setView("login")}
+        />
+      )}
+      {view === "forgot-password" && (
+        <ForgotPasswordView
+          onGoLogin={() => setView("login")}
+          onGoReset={(email, token) => { setResetPrefill({ email, token }); setView("reset-password"); }}
+        />
+      )}
+      {view === "reset-password" && (
+        <ResetPasswordView
+          prefillEmail={resetPrefill.email}
+          prefillToken={resetPrefill.token}
+          onSuccess={() => setView("login")}
           onGoLogin={() => setView("login")}
         />
       )}
@@ -868,7 +889,7 @@ function AuthShell({ title, subtitle, children }) {
   );
 }
 
-function LoginView({ onSuccess, onGoRegister }) {
+function LoginView({ onSuccess, onGoRegister, onGoForgotPassword }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -909,6 +930,11 @@ function LoginView({ onSuccess, onGoRegister }) {
             onChange={(e) => setPassword(e.target.value)}
             className="flex-1 px-2 py-2.5 text-sm outline-none" />
         </div>
+        <div className="text-right">
+          <button type="button" onClick={onGoForgotPassword} className="text-xs" style={{ color: "#b9791f" }}>
+            ลืมรหัสผ่าน?
+          </button>
+        </div>
         {error && <div className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
         <button type="submit" disabled={loading}
           className="w-full rounded-xl py-2.5 font-medium text-sm text-white disabled:opacity-70"
@@ -919,6 +945,145 @@ function LoginView({ onSuccess, onGoRegister }) {
       <p className="text-sm text-gray-500 mt-4 text-center">
         ยังไม่มีบัญชี?{" "}
         <button onClick={onGoRegister} className="font-medium" style={{ color: "#b9791f" }}>สมัครสมาชิก</button>
+      </p>
+    </AuthShell>
+  );
+}
+
+function ForgotPasswordView({ onGoLogin, onGoReset }) {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null); // { resetToken, note }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "ส่งคำขอไม่สำเร็จ");
+      setResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <AuthShell title="ลืมรหัสผ่าน" subtitle="กรอกอีเมลที่ใช้สมัคร เพื่อขอลิงก์ตั้งรหัสผ่านใหม่">
+      {result ? (
+        <div className="space-y-3">
+          <div className="text-sm bg-amber-50 border border-amber-100 rounded-lg px-3 py-2.5" style={{ color: "#8a6417" }}>
+            {result.note}
+          </div>
+          <div className="text-xs text-gray-500 break-all bg-gray-50 border rounded-lg px-3 py-2 font-mono">
+            {result.resetToken}
+          </div>
+          <button
+            onClick={() => onGoReset(email, result.resetToken)}
+            className="w-full rounded-xl py-2.5 font-medium text-sm text-white"
+            style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}
+          >
+            ตั้งรหัสผ่านใหม่ต่อเลย
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="flex items-center border rounded-lg px-3">
+            <Mail size={16} className="text-gray-400" />
+            <input required type="email" placeholder="อีเมล" value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="flex-1 px-2 py-2.5 text-sm outline-none" />
+          </div>
+          {error && <div className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
+          <button type="submit" disabled={loading}
+            className="w-full rounded-xl py-2.5 font-medium text-sm text-white disabled:opacity-70"
+            style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}>
+            {loading ? "กำลังส่งคำขอ..." : "ขอรีเซ็ตรหัสผ่าน"}
+          </button>
+        </form>
+      )}
+      <p className="text-sm text-gray-500 mt-4 text-center">
+        <button onClick={onGoLogin} className="font-medium" style={{ color: "#b9791f" }}>← กลับไปเข้าสู่ระบบ</button>
+      </p>
+    </AuthShell>
+  );
+}
+
+function ResetPasswordView({ prefillEmail, prefillToken, onSuccess, onGoLogin }) {
+  const [form, setForm] = useState({ email: prefillEmail || "", token: prefillToken || "", newPassword: "" });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  function set(field) {
+    return (e) => setForm({ ...form, [field]: e.target.value });
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "ตั้งรหัสผ่านใหม่ไม่สำเร็จ");
+      setDone(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <AuthShell title="ตั้งรหัสผ่านใหม่สำเร็จ" subtitle="ใช้รหัสผ่านใหม่เข้าสู่ระบบได้เลย">
+        <button onClick={onGoLogin} className="w-full rounded-xl py-2.5 font-medium text-sm text-white"
+          style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}>
+          ไปหน้าเข้าสู่ระบบ
+        </button>
+      </AuthShell>
+    );
+  }
+
+  return (
+    <AuthShell title="ตั้งรหัสผ่านใหม่" subtitle="กรอกโทเค็นที่ได้รับและรหัสผ่านใหม่">
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="flex items-center border rounded-lg px-3">
+          <Mail size={16} className="text-gray-400" />
+          <input required type="email" placeholder="อีเมล" value={form.email}
+            onChange={set("email")} className="flex-1 px-2 py-2.5 text-sm outline-none" />
+        </div>
+        <div className="flex items-center border rounded-lg px-3">
+          <input required placeholder="โทเค็นที่ได้รับ" value={form.token}
+            onChange={set("token")} className="flex-1 px-2 py-2.5 text-sm outline-none font-mono text-xs" />
+        </div>
+        <div className="flex items-center border rounded-lg px-3">
+          <Lock size={16} className="text-gray-400" />
+          <input required type="password" placeholder="รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)" value={form.newPassword}
+            onChange={set("newPassword")} className="flex-1 px-2 py-2.5 text-sm outline-none" />
+        </div>
+        {error && <div className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
+        <button type="submit" disabled={loading}
+          className="w-full rounded-xl py-2.5 font-medium text-sm text-white disabled:opacity-70"
+          style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}>
+          {loading ? "กำลังบันทึก..." : "ตั้งรหัสผ่านใหม่"}
+        </button>
+      </form>
+      <p className="text-sm text-gray-500 mt-4 text-center">
+        <button onClick={onGoLogin} className="font-medium" style={{ color: "#b9791f" }}>← กลับไปเข้าสู่ระบบ</button>
       </p>
     </AuthShell>
   );
@@ -1829,24 +1994,38 @@ function SellerDashboard({ authToken, categories }) {
         ) : (
           <div className="bg-white rounded-xl shadow-sm divide-y">
             {orders.map((o) => (
-              <div key={o.id} className="flex items-center justify-between p-3 text-sm gap-3">
-                <div className="min-w-0">
-                  <div className="text-gray-800 line-clamp-1">{o.product_name} × {o.quantity}</div>
-                  <div className="text-xs text-gray-400 mt-0.5 font-mono">{o.order_no}</div>
+              <div key={o.id} className="p-3 text-sm space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-gray-800 line-clamp-1">{o.product_name} × {o.quantity}</div>
+                    <div className="text-xs text-gray-400 mt-0.5 font-mono">{o.order_no}</div>
+                  </div>
+                  <div className="font-semibold shrink-0" style={{ color: "#b9791f" }}>฿{THB(o.line_total)}</div>
+                  <select
+                    value={o.status}
+                    onChange={(e) => updateOrderStatus(o.order_id, e.target.value)}
+                    className="text-xs border rounded-lg px-2 py-1.5 outline-none shrink-0"
+                  >
+                    <option value="pending" disabled>รอดำเนินการ</option>
+                    <option value="paid" disabled>ชำระเงินแล้ว</option>
+                    <option value="packed">แพ็คของแล้ว</option>
+                    <option value="shipped">จัดส่งแล้ว</option>
+                    <option value="delivered">ส่งถึงแล้ว</option>
+                    <option value="cancelled">ยกเลิก</option>
+                  </select>
                 </div>
-                <div className="font-semibold shrink-0" style={{ color: "#b9791f" }}>฿{THB(o.line_total)}</div>
-                <select
-                  value={o.status}
-                  onChange={(e) => updateOrderStatus(o.order_id, e.target.value)}
-                  className="text-xs border rounded-lg px-2 py-1.5 outline-none shrink-0"
-                >
-                  <option value="pending" disabled>รอดำเนินการ</option>
-                  <option value="paid" disabled>ชำระเงินแล้ว</option>
-                  <option value="packed">แพ็คของแล้ว</option>
-                  <option value="shipped">จัดส่งแล้ว</option>
-                  <option value="delivered">ส่งถึงแล้ว</option>
-                  <option value="cancelled">ยกเลิก</option>
-                </select>
+                {o.ship_name ? (
+                  <div className="flex items-start gap-1.5 text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                    <MapPin size={13} className="text-amber-500 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-medium text-gray-700">{o.ship_name}</span> · {o.ship_phone}
+                      <br />
+                      {[o.ship_line1, o.ship_subdistrict, o.ship_district, o.ship_province, o.ship_postal_code].filter(Boolean).join(" ")}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400 italic px-3">ไม่มีที่อยู่จัดส่งแนบมากับคำสั่งซื้อนี้</div>
+                )}
               </div>
             ))}
           </div>
@@ -2434,17 +2613,26 @@ function ProfileView({ authToken, authUser, onUserUpdated }) {
         ))}
       </div>
 
-      {tab === "info" && <ProfileInfoTab authUser={authUser} authHeaders={authHeaders} onUserUpdated={onUserUpdated} />}
+      {tab === "info" && <ProfileInfoTab authUser={authUser} authToken={authToken} authHeaders={authHeaders} onUserUpdated={onUserUpdated} />}
       {tab === "addresses" && <ProfileAddressesTab authHeaders={authHeaders} />}
       {tab === "cards" && <ProfileCardsTab authHeaders={authHeaders} />}
     </main>
   );
 }
 
-function ProfileInfoTab({ authUser, authHeaders, onUserUpdated }) {
-  const [form, setForm] = useState({ displayName: authUser.display_name || "", phone: authUser.phone || "" });
+function ProfileInfoTab({ authUser, authToken, authHeaders, onUserUpdated }) {
+  const [form, setForm] = useState({
+    displayName: authUser.display_name || "",
+    phone: authUser.phone || "",
+    gender: authUser.gender || "",
+    dateOfBirth: authUser.date_of_birth ? authUser.date_of_birth.slice(0, 10) : "",
+    bio: authUser.bio || "",
+  });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState("");
+  const avatarInputRef = React.useRef(null);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -2459,28 +2647,107 @@ function ProfileInfoTab({ authUser, authHeaders, onUserUpdated }) {
     }
   }
 
+  async function handleAvatarPick(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) {
+      setAvatarError("รองรับเฉพาะไฟล์รูปภาพ (jpg, png, webp, gif)");
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      setAvatarError("ไฟล์รูปต้องไม่เกิน 3MB");
+      return;
+    }
+    setAvatarError("");
+    setAvatarUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("avatar", file);
+      const res = await fetch(`${API}/api/profile/avatar`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${authToken}` },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "อัปโหลดรูปไม่สำเร็จ");
+      onUserUpdated({ ...authUser, avatar_url: data.avatarUrl });
+    } catch (err) {
+      setAvatarError(err.message);
+    } finally {
+      setAvatarUploading(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
+    }
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm p-5 space-y-3 max-w-md">
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">อีเมล</label>
-        <div className="border rounded-lg px-3 py-2 text-sm text-gray-400 bg-gray-50">{authUser.email}</div>
+    <div className="max-w-md space-y-4">
+      {/* avatar */}
+      <div className="bg-white rounded-xl shadow-sm p-5 flex items-center gap-4">
+        <div className="relative w-16 h-16 shrink-0">
+          {authUser.avatar_url ? (
+            <img src={authUser.avatar_url} className="w-16 h-16 rounded-full object-cover" />
+          ) : (
+            <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "#0b1a3d" }}>
+              <User size={26} className="text-amber-300" />
+            </div>
+          )}
+        </div>
+        <div>
+          <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={avatarUploading}
+            className="text-sm font-medium disabled:opacity-60" style={{ color: "#b9791f" }}>
+            {avatarUploading ? "กำลังอัปโหลด..." : "เปลี่ยนรูปโปรไฟล์"}
+          </button>
+          <p className="text-[11px] text-gray-400 mt-1">JPG, PNG, WEBP หรือ GIF ไม่เกิน 3MB</p>
+          {avatarError && <p className="text-xs text-red-500 mt-1">{avatarError}</p>}
+        </div>
+        <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleAvatarPick} className="hidden" />
       </div>
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">ชื่อที่ใช้แสดง</label>
-        <input value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-          className="border rounded-lg px-3 py-2 text-sm w-full outline-none focus:border-amber-400" />
-      </div>
-      <div>
-        <label className="text-xs text-gray-500 mb-1 block">เบอร์โทรศัพท์</label>
-        <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
-          className="border rounded-lg px-3 py-2 text-sm w-full outline-none focus:border-amber-400" />
-      </div>
-      <button type="submit" disabled={saving}
-        className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-70"
-        style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}>
-        {saving ? "กำลังบันทึก..." : saved ? "บันทึกแล้ว ✓" : "บันทึกการเปลี่ยนแปลง"}
-      </button>
-    </form>
+
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm p-5 space-y-3">
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">อีเมล</label>
+          <div className="border rounded-lg px-3 py-2 text-sm text-gray-400 bg-gray-50">{authUser.email}</div>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">ชื่อที่ใช้แสดง</label>
+          <input value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+            className="border rounded-lg px-3 py-2 text-sm w-full outline-none focus:border-amber-400" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">เบอร์โทรศัพท์</label>
+          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
+            className="border rounded-lg px-3 py-2 text-sm w-full outline-none focus:border-amber-400" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">เพศ</label>
+            <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}
+              className="border rounded-lg px-3 py-2 text-sm w-full outline-none focus:border-amber-400">
+              <option value="">ไม่ระบุ</option>
+              <option value="male">ชาย</option>
+              <option value="female">หญิง</option>
+              <option value="other">อื่นๆ</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">วันเกิด</label>
+            <input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+              className="border rounded-lg px-3 py-2 text-sm w-full outline-none focus:border-amber-400" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">เกี่ยวกับฉัน</label>
+          <textarea value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} rows={3}
+            placeholder="เขียนแนะนำตัวสั้นๆ..."
+            className="border rounded-lg px-3 py-2 text-sm w-full outline-none focus:border-amber-400" />
+        </div>
+        <button type="submit" disabled={saving}
+          className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-70"
+          style={{ background: "linear-gradient(135deg,#e0b45a,#b9791f)" }}>
+          {saving ? "กำลังบันทึก..." : saved ? "บันทึกแล้ว ✓" : "บันทึกการเปลี่ยนแปลง"}
+        </button>
+      </form>
+    </div>
   );
 }
 

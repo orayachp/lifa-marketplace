@@ -7,8 +7,8 @@ router.use(requireAuth);
 
 // POST /api/chat/start — { sellerId, productId? } -> finds or creates the
 // conversation between the current user (as buyer) and that seller.
-// If a productId is given, it's saved as the conversation's "current topic"
-// (updated each time — asking about a new product refreshes what's pinned).
+// Each product gets its own thread — asking about a different product opens
+// a separate conversation, not the same one as before.
 router.post("/start", async (req, res) => {
   const { sellerId, productId } = req.body;
   if (!sellerId) return res.status(400).json({ error: "ต้องระบุร้านค้าที่จะแชทด้วย" });
@@ -16,13 +16,10 @@ router.post("/start", async (req, res) => {
 
   try {
     const { rows: existing } = await pool.query(
-      "SELECT id FROM chat_conversations WHERE buyer_id = $1 AND seller_id = $2",
-      [req.user.id, sellerId]
+      "SELECT id FROM chat_conversations WHERE buyer_id = $1 AND seller_id = $2 AND product_id IS NOT DISTINCT FROM $3",
+      [req.user.id, sellerId, productId || null]
     );
     if (existing.length > 0) {
-      if (productId) {
-        await pool.query("UPDATE chat_conversations SET product_id = $1 WHERE id = $2", [productId, existing[0].id]);
-      }
       return res.json({ conversationId: existing[0].id });
     }
     const { rows } = await pool.query(

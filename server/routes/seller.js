@@ -176,9 +176,13 @@ router.get("/orders", async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT oi.id, oi.product_name, oi.unit_price, oi.quantity, oi.line_total,
-              o.id AS order_id, o.order_no, o.status, o.created_at, o.payment_status
+              o.id AS order_id, o.order_no, o.status, o.created_at, o.payment_status,
+              a.recipient_name AS ship_name, a.phone AS ship_phone, a.line1 AS ship_line1,
+              a.subdistrict AS ship_subdistrict, a.district AS ship_district,
+              a.province AS ship_province, a.postal_code AS ship_postal_code
        FROM order_items oi
        JOIN orders o ON o.id = oi.order_id
+       LEFT JOIN addresses a ON a.id = o.shipping_address_id
        WHERE oi.seller_id = $1
        ORDER BY o.created_at DESC
        LIMIT 100`,

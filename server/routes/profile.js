@@ -1,4 +1,7 @@
 const express = require("express");
+const path = require("path");
+const crypto = require("crypto");
+const multer = require("multer");
 const pool = require("../db");
 const { requireAuth } = require("../middleware/auth");
 
@@ -7,20 +10,67 @@ router.use(requireAuth);
 
 // ---- Profile info -----------------------------------------------------
 
-// PUT /api/profile — update display name / phone
+// PUT /api/profile — update display name, phone, gender, date of birth, bio.
+// Send an empty string "" to intentionally clear an optional field.
 router.put("/", async (req, res) => {
-  const { displayName, phone } = req.body;
+  const { displayName, phone, gender, dateOfBirth, bio } = req.body;
   try {
     const { rows } = await pool.query(
-      `UPDATE users SET display_name = COALESCE($1, display_name), phone = COALESCE($2, phone), updated_at = now()
-       WHERE id = $3 RETURNING id, email, role, display_name, phone`,
-      [displayName || null, phone || null, req.user.id]
+      `UPDATE users SET
+         display_name = COALESCE($1, display_name),
+         phone = CASE WHEN $2 = '' THEN NULL WHEN $2 IS NOT NULL THEN $2 ELSE phone END,
+         gender = CASE WHEN $3 = '' THEN NULL WHEN $3 IS NOT NULL THEN $3 ELSE gender END,
+         date_of_birth = CASE WHEN $4 = '' THEN NULL WHEN $4 IS NOT NULL THEN $4::date ELSE date_of_birth END,
+         bio = CASE WHEN $5 = '' THEN NULL WHEN $5 IS NOT NULL THEN $5 ELSE bio END,
+         updated_at = now()
+       WHERE id = $6
+       RETURNING id, email, role, display_name, phone, avatar_url, gender, date_of_birth, bio`,
+      [displayName || null, phone ?? null, gender ?? null, dateOfBirth ?? null, bio ?? null, req.user.id]
     );
     res.json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "อัปเดตโปรไฟล์ไม่สำเร็จ" });
   }
+});
+
+// --- Avatar upload (local disk storage, same pattern as seller product images) ---
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, path.join(__dirname, "..", "uploads")),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || ".jpg";
+    cb(null, `avatar-${req.user.id}-${crypto.randomBytes(6).toString("hex")}${ext}`);
+  },
+});
+const uploadAvatar = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB
+  fileFilter: (req, file, cb) => {
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) {
+      return cb(new Error("รองรับเฉพาะไฟล์รูปภาพ (jpg, png, webp, gif)"));
+    }
+    cb(null, true);
+  },
+});
+
+// POST /api/profile/avatar — multipart/form-data, field name "avatar"
+router.post("/avatar", (req, res) => {
+  uploadAvatar.single("avatar")(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message || "อัปโหลดรูปไม่สำเร็จ" });
+    if (!req.file) return res.status(400).json({ error: "ไม่พบไฟล์รูปภาพ" });
+    try {
+      const base = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 4000}`;
+      const url = `${base}/uploads/${req.file.filename}`;
+      const { rows } = await pool.query(
+        "UPDATE users SET avatar_url = $1, updated_at = now() WHERE id = $2 RETURNING avatar_url",
+        [url, req.user.id]
+      );
+      res.json({ avatarUrl: rows[0].avatar_url });
+    } catch (dbErr) {
+      console.error(dbErr);
+      res.status(500).json({ error: "บันทึกรูปโปรไฟล์ไม่สำเร็จ" });
+    }
+  });
 });
 
 // ---- Addresses ----------------------------------------------------------
